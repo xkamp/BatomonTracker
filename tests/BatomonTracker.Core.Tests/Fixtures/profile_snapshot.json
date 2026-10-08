@@ -1,0 +1,31 @@
+{
+  "display_name": "Test Trainer",
+  "games_played": 12,
+  "runs_won": 3,
+  "mmr": 1042,
+  "ranked_mmr": 998,
+  "rank_tier": "bronze",
+  "rank_sub": 2,
+  "rank_stars": 1,
+  "match_history": [
+    {
+      "run_id": "completed-run-001",
+      "ended_at": "2026-09-23T10:00:00Z",
+      "is_ranked": true,
+      "lives": 8,
+      "outcome": "won",
+      "round": 10,
+      "trainer_id": "pyromaniac",
+      "wins": 10,
+      "team": [{ "species_id": "boomagon", "level": 2 }]
+    },
+    {
+      "run_id": "completed-run-002",
+      "outcome": "lost",
+      "round": 5,
+      "wins": 3,
+      "team": []
+    }
+  ],
+  "future_field": true
+}

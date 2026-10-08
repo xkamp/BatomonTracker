@@ -1,0 +1,42 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BatomonTracker.Core", "..\src\BatomonTracker.Core\BatomonTracker.Core.csproj", "{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0001}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BatomonTracker.Infrastructure", "..\src\BatomonTracker.Infrastructure\BatomonTracker.Infrastructure.csproj", "{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0002}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BatomonTracker.App", "..\src\BatomonTracker.App\BatomonTracker.App.csproj", "{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0003}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BatomonTracker.Core.Tests", "..\tests\BatomonTracker.Core.Tests\BatomonTracker.Core.Tests.csproj", "{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0004}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BatomonTracker.Server", "..\src\BatomonTracker.Server\BatomonTracker.Server.csproj", "{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0005}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0001}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0001}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0001}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0001}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0002}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0002}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0002}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0002}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0003}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0003}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0003}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0003}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0004}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0004}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0004}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0004}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0005}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0005}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0005}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A6B75F86-5F36-4C23-9A3B-1F0D2E6F0005}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

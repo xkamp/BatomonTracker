@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0d1a22">
+  <title>Batomon Observatory</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/">
+        <span class="brand-mark">B</span>
+        <span><strong>BATOMON</strong><small>OBSERVATORY</small></span>
+      </a>
+      <div class="side-label">DATA ROOM</div>
+      <nav>
+        <a class="nav-link active" href="#overview">Overview <span>01</span></a>
+        <a class="nav-link" href="#meta">Meta field <span>02</span></a>
+        <a class="nav-link" href="#explorer">Team explorer <span>03</span></a>
+      </nav>
+      <div class="sidebar-note">
+        <span class="pulse"></span>
+        <div><strong id="connection-label">API online</strong><small>Local PostgreSQL source</small></div>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div>
+          <p class="kicker">BATOMON SHOWDOWN / DATA ENGINE</p>
+          <h1>Il meta, senza supposizioni.</h1>
+          <p class="lede">Snapshot reali, run osservate e vittorie al turno. Ogni numero resta legato alla sua fonte.</p>
+        </div>
+        <button class="refresh-button" id="refresh-button" type="button"><span>↻</span> Aggiorna dati</button>
+      </header>
+
+      <section class="control-strip" aria-label="Filtri analytics">
+        <label>Fase
+          <select id="phase-filter">
+            <option value="all">Tutte le fasi</option>
+            <option value="standard">Standard</option>
+            <option value="extended">Extended, dopo 10 vittorie</option>
+          </select>
+        </label>
+       <label>Dataset
+         <select id="dataset-filter"><option value="">Tutti i dataset</option></select>
+       </label>
+       <label>Vista
+         <select id="scope-filter">
+           <option value="global">Globale</option>
+           <option value="mine">Solo le mie run</option>
+         </select>
+       </label>
+       <label id="token-field" hidden>Token Steam
+         <input id="api-token" type="password" placeholder="JWT API">
+       </label>
+       <div class="filter-context" id="filter-context">Caricamento dati...</div>
+      </section>
+
+      <section class="signal-grid" id="overview">
+        <article class="signal-card signal-card-primary">
+          <div class="card-topline"><span>DATASET OSSERVATI</span><span class="status-dot"></span></div>
+          <strong id="dataset-count">--</strong>
+          <p>fonti locali attive</p>
+          <div class="card-rule"></div>
+          <small id="round-range">Round --</small>
+        </article>
+        <article class="signal-card">
+          <div class="card-topline"><span>SNAPSHOT BATTLE</span><span>#01</span></div>
+          <strong id="snapshot-count">--</strong>
+          <p>stati di combattimento importati</p>
+          <div class="card-rule"></div>
+          <small>unita deduplicate per snapshot</small>
+        </article>
+        <article class="signal-card">
+          <div class="card-topline"><span>RUN COMPLETE</span><span>#02</span></div>
+          <strong id="complete-run-count">--</strong>
+          <p>run con esito osservabile</p>
+          <div class="card-rule"></div>
+          <small id="ten-win-count">-- raggiunte a 10 vittorie</small>
+        </article>
+        <article class="signal-card signal-card-accent">
+          <div class="card-topline"><span>EXTENDED</span><span>#03</span></div>
+          <strong id="extended-run-count">--</strong>
+          <p>run oltre la soglia vittorie</p>
+          <div class="card-rule"></div>
+          <small>conteggiate solo dopo wins_before 10</small>
+        </article>
+      </section>
+
+      <section class="section-block" id="meta">
+        <div class="section-heading">
+          <div><p class="kicker">01 / COMPOSITION PRESSURE</p><h2>Chi sta davvero giocando?</h2></div>
+          <p class="section-help">Pick osservato per battle snapshot. Il run winrate esclude le run incomplete.</p>
+        </div>
+        <div class="meta-layout">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Batomon</th><th>Battle</th><th>Battle winrate</th><th>Run</th><th>Run winrate</th></tr></thead>
+              <tbody id="top-batomon"><tr><td colspan="6" class="empty-cell">Caricamento...</td></tr></tbody>
+            </table>
+          </div>
+          <div class="round-panel">
+            <div class="panel-heading"><div><span class="micro-label">BATTLE RESULT</span><h3>Winrate per round</h3></div><span class="legend-dot"></span></div>
+            <div class="round-chart" id="round-chart"><div class="empty-cell">Caricamento...</div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-block explorer-section" id="explorer">
+        <div class="section-heading">
+          <div><p class="kicker">02 / TEAM EXPLORER</p><h2>Cerca una composizione</h2></div>
+          <p class="section-help">I compagni sono Batomon apparsi in qualsiasi momento della stessa run.</p>
+        </div>
+        <div class="explorer-bar">
+          <label for="species-input">Species ID</label>
+          <input id="species-input" value="boomagon" autocomplete="off" spellcheck="false">
+          <button class="primary-button" id="analyze-button" type="button">Analizza</button>
+          <span class="explorer-status" id="explorer-status"></span>
+        </div>
+        <div class="explorer-result">
+          <div class="species-summary" id="species-summary"><span class="summary-placeholder">Seleziona un Batomon per iniziare.</span></div>
+          <div class="companions-grid" id="companions-grid"></div>
+        </div>
+      </section>
+
+      <footer class="footer-note"><span>DATA CONTRACT</span> I numeri riflettono solo cio che e stato osservato nella cache. Le run parziali non entrano nei winrate finali.</footer>
+    </main>
+  </div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

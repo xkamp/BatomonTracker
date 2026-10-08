@@ -1,0 +1,30 @@
+{
+  "run_id": "test-run-001",
+  "save_version": 1,
+  "save_seq": 74,
+  "round": 4,
+  "wins": 2,
+  "lives": 8,
+  "gold": 0,
+  "trainer_id": "pyromaniac",
+  "shop_rank": 4,
+  "blackboard": { "shop_roll_seq": 2 },
+  "team": [
+    { "species_id": "boomagon", "level": 1, "is_shiny": false },
+    {},
+    null
+  ],
+  "bench": [
+    { "species_id": "shellter", "level": 2, "is_shiny": false },
+    {},
+    null
+  ],
+  "shop_content": [
+    { "species_id": "venopuff", "level": 1, "is_shiny": false },
+    null,
+    { "species_id": "noxalith", "level": 2, "is_shiny": true },
+    "voucher"
+  ],
+  "trinket_ids": ["fake_diamond", "gold_nugget"],
+  "future_field": "ignored"
+}

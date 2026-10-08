@@ -1,0 +1,30 @@
+## .NET build output
+**/bin/
+**/obj/
+
+## Published and generated artifacts
+artifacts/
+TestResults/
+
+## Local application data
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+## Local configuration and secrets
+.env
+.env.*
+!.env.example
+appsettings.Local.json
+
+## IDE and OS files
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+Thumbs.db
+Desktop.ini
