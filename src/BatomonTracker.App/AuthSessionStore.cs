@@ -27,10 +27,16 @@ public sealed class AuthSessionStore
                 return null;
             }
 
-            string accessToken = string.IsNullOrWhiteSpace(stored.ProtectedAccessToken)
-                ? stored.AccessToken ?? string.Empty
-                : Unprotect(stored.ProtectedAccessToken);
-            return new AuthSessionData(stored.SteamId, accessToken);
+            if (string.IsNullOrWhiteSpace(stored.ProtectedAccessToken))
+            {
+                return null;
+            }
+
+            string accessToken = Unprotect(stored.ProtectedAccessToken);
+            string refreshToken = string.IsNullOrWhiteSpace(stored.ProtectedRefreshToken)
+                ? string.Empty
+                : Unprotect(stored.ProtectedRefreshToken);
+            return new AuthSessionData(stored.SteamId, accessToken, refreshToken);
         }
         catch (IOException)
         {
@@ -54,10 +60,10 @@ public sealed class AuthSessionStore
 
     public void SaveSteamId(string steamId)
     {
-        SaveSession(steamId, string.Empty);
+        SaveSession(steamId, string.Empty, string.Empty);
     }
 
-    public void SaveSession(string steamId, string accessToken)
+    public void SaveSession(string steamId, string accessToken, string refreshToken = "")
     {
         string? directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrWhiteSpace(directory))
@@ -66,8 +72,9 @@ public sealed class AuthSessionStore
         }
 
         string protectedToken = Protect(accessToken);
+        string protectedRefreshToken = Protect(refreshToken);
         string temporaryPath = path + ".tmp";
-        File.WriteAllText(temporaryPath, JsonSerializer.Serialize(new StoredAuthSession(steamId, protectedToken)));
+        File.WriteAllText(temporaryPath, JsonSerializer.Serialize(new StoredAuthSession(steamId, protectedToken, protectedRefreshToken)));
         File.Move(temporaryPath, path, overwrite: true);
     }
 
@@ -101,6 +108,6 @@ public sealed class AuthSessionStore
 
 }
 
-public sealed record AuthSessionData(string SteamId, string AccessToken);
+public sealed record AuthSessionData(string SteamId, string AccessToken, string RefreshToken = "");
 
-internal sealed record StoredAuthSession(string SteamId, string? ProtectedAccessToken, string? AccessToken = null);
+internal sealed record StoredAuthSession(string SteamId, string ProtectedAccessToken, string? ProtectedRefreshToken = null);

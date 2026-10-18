@@ -3,7 +3,14 @@ using System.Text.Json;
 
 namespace BatomonTracker.App;
 
-public sealed record OverlaySettings(double Scale = 1.0, double Opacity = 0.95, bool StartVisible = true);
+public sealed record OverlaySettings(
+    double Scale = 1.0,
+    double Opacity = 0.95,
+    bool StartVisible = true,
+    double Width = 470,
+    double Height = 500,
+    string ToggleOverlayHotkey = "Ctrl+Shift+O",
+    string ToggleInteractionHotkey = "Ctrl+Shift+L");
 
 public sealed class OverlaySettingsStore
 {
@@ -58,6 +65,22 @@ public sealed class OverlaySettingsStore
     {
         double scale = double.IsFinite(settings.Scale) ? Math.Clamp(settings.Scale, 0.75, 2.0) : 1.0;
         double opacity = double.IsFinite(settings.Opacity) ? Math.Clamp(settings.Opacity, 0.35, 1.0) : 0.95;
-        return settings with { Scale = scale, Opacity = opacity };
+        double width = double.IsFinite(settings.Width) ? Math.Clamp(settings.Width, 300, 1000) : 470;
+        double height = double.IsFinite(settings.Height) ? Math.Clamp(settings.Height, 280, 900) : 500;
+        string toggleOverlayHotkey = string.IsNullOrWhiteSpace(settings.ToggleOverlayHotkey)
+            ? "Ctrl+Shift+O"
+            : settings.ToggleOverlayHotkey.Trim();
+        string toggleInteractionHotkey = string.IsNullOrWhiteSpace(settings.ToggleInteractionHotkey)
+            ? "Ctrl+Shift+L"
+            : settings.ToggleInteractionHotkey.Trim();
+        return settings with
+        {
+            Scale = scale,
+            Opacity = opacity,
+            Width = width,
+            Height = height,
+            ToggleOverlayHotkey = toggleOverlayHotkey,
+            ToggleInteractionHotkey = toggleInteractionHotkey
+        };
     }
 }

@@ -27,6 +27,8 @@ Set-Location "C:\Users\lucac\Desktop\ProgettiPython\BatomonTracker"
 Avviare database e API:
 
 ```powershell
+Copy-Item ".env.example" ".env"
+# Modificare .env e sostituire le password/segreti di esempio con valori casuali.
 docker compose up -d --build
 docker compose ps
 ```
@@ -83,6 +85,10 @@ Hotkey:
 
 - `Ctrl+Shift+O`: mostra o nasconde l'overlay;
 - `Ctrl+Shift+L`: abilita o disabilita la modalita modifica e spostamento.
+
+Le scorciatoie possono essere cambiate dalla pagina `Impostazioni`: cliccare il relativo campo e premere la nuova combinazione.
+
+Quando la modalita modifica e attiva, trascinare qualsiasi bordo o angolo dell'overlay per modificarne liberamente le dimensioni. La dimensione viene salvata automaticamente.
 
 Il menu tray permette anche di cambiare visibilita, click-through, scala e opacita.
 

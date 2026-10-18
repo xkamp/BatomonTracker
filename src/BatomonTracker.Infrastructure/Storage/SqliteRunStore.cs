@@ -7,6 +7,11 @@ namespace BatomonTracker.Infrastructure.Storage;
 
 public sealed class SqliteRunStore
 {
+    static SqliteRunStore()
+    {
+        SQLitePCL.Batteries_V2.Init();
+    }
+
     private readonly string databasePath;
     private readonly string connectionString;
     private readonly SemaphoreSlim writeGate = new(1, 1);

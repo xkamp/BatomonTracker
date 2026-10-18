@@ -21,11 +21,11 @@ Obiettivo: consultare le run concluse.
 
 - [x] lettura di `profile_snapshot.json`;
 - [x] elenco ultime run;
-- [ ] winrate personale;
-- [ ] statistiche per trainer;
-- [ ] statistiche per Batomon;
-- [ ] filtri ranked/non-ranked;
-- [ ] vista MMR e tier.
+- [x] winrate personale;
+- [x] statistiche per trainer;
+- [x] statistiche per Batomon;
+- [x] filtri ranked/non-ranked;
+- [x] vista MMR e tier.
 
 ## v0.3: Database locale
 
@@ -59,7 +59,7 @@ L'overlay va sviluppato dopo aver stabilizzato la finestra normale e il flusso d
 
 Obiettivo: fornire analisi basate sui dati raccolti.
 
-- [ ] statistiche aggregate locali;
+- [x] statistiche aggregate locali;
 - [x] prima valutazione dello shop;
 - [x] raccomandazione iniziale Buy/Hold;
 - [x] spiegazioni di acquisto e priorita basate su copie/livelli;

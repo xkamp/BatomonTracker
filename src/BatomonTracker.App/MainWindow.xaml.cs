@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Interop;
 using Forms = System.Windows.Forms;
 using Drawing = System.Drawing;
@@ -27,8 +28,6 @@ public partial class MainWindow : Window
     private const int ToggleInteractionHotKeyId = 2;
     private const uint ModControl = 0x0002;
     private const uint ModShift = 0x0004;
-    private const uint VkO = 0x4F;
-    private const uint VkL = 0x4C;
     private readonly RunSaveMonitor monitor;
     private readonly SqliteRunStore store;
     private readonly OverlayWindow overlay;
@@ -46,6 +45,7 @@ public partial class MainWindow : Window
     private readonly CustomBuildStore customBuildStore = new();
     private string? lastGlobalRecommendationKey;
     private IReadOnlyList<CompletedRun> lastCompletedRuns = Array.Empty<CompletedRun>();
+    private string personalStatsFilter = "all";
 
     public MainWindow()
     {
@@ -91,10 +91,22 @@ public partial class MainWindow : Window
             await LoadHistoryAsync();
             if (authSessionStore.Load() is AuthSessionData session)
             {
-                ShowAuthenticatedDashboard(session.SteamId);
+                AuthSessionData activeSession = session;
+                if (!string.IsNullOrWhiteSpace(session.RefreshToken))
+                {
+                    AuthSessionData? refreshedSession = await remoteSyncClient.RefreshSessionAsync(session.RefreshToken);
+                    if (refreshedSession is not null)
+                    {
+                        activeSession = refreshedSession;
+                        authSessionStore.SaveSession(activeSession.SteamId, activeSession.AccessToken, activeSession.RefreshToken);
+                    }
+                }
+
+                ShowAuthenticatedDashboard(activeSession.SteamId);
+                _ = LoadAuthenticatedProfileAsync(activeSession.AccessToken);
                 _ = ImportProfileHistoryAsync();
-                _ = SyncLiveRunAsync(session.AccessToken);
-                _ = SyncOpponentCacheAsync(session.AccessToken);
+                _ = SyncLiveRunAsync(activeSession.AccessToken);
+                _ = SyncOpponentCacheAsync(activeSession.AccessToken);
             }
         }
         catch (Exception exception) when (exception is IOException or InvalidOperationException)
@@ -133,7 +145,9 @@ public partial class MainWindow : Window
             ProfileText.Text = $"Profilo: {profile.DisplayName ?? "sconosciuto"}\n" +
                                $"Partite: {profile.GamesPlayed?.ToString() ?? "n/d"} | " +
                                $"Vittorie: {profile.RunsWon?.ToString() ?? "n/d"} | " +
-                               $"Storico disponibile: {profile.MatchCount}";
+                               $"Storico disponibile: {profile.MatchCount}\n" +
+                               $"MMR: {profile.Mmr?.ToString() ?? "n/d"} · Ranked MMR: {profile.RankedMmr?.ToString() ?? "n/d"} · " +
+                               $"Tier: {profile.RankTier ?? "n/d"} · Stelle: {profile.RankStars?.ToString() ?? "n/d"}";
         }
         catch (IOException)
         {
@@ -260,6 +274,10 @@ public partial class MainWindow : Window
         {
             await store.SaveAsync(args.State, args.Events);
             await LoadHistoryAsync();
+            if (authSessionStore.Load() is AuthSessionData session && !string.IsNullOrWhiteSpace(session.AccessToken))
+            {
+                _ = SyncLiveRunAsync(args.State, args.Events, session.AccessToken);
+            }
         }
         catch (IOException exception)
         {
@@ -373,16 +391,32 @@ public partial class MainWindow : Window
         UpdateProfileMenu(false);
     }
 
-    private void SteamLogin_Click(object sender, RoutedEventArgs args)
+    private async void SteamLogin_Click(object sender, RoutedEventArgs args)
     {
         string authUrl = Environment.GetEnvironmentVariable("BATOMON_AUTH_URL") ?? "http://localhost:5000/auth/steam/login";
         try
         {
+            if (Uri.TryCreate(authUrl, UriKind.Absolute, out Uri? authUri))
+            {
+                using var healthClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+                string healthUrl = $"{authUri.Scheme}://{authUri.Authority}/health";
+                using HttpResponseMessage healthResponse = await healthClient.GetAsync(healthUrl);
+                healthResponse.EnsureSuccessStatusCode();
+            }
+
             string callback = steamAuthListener.Start();
             string separator = authUrl.Contains('?', StringComparison.Ordinal) ? "&" : "?";
             string loginUrl = $"{authUrl}{separator}return_url={Uri.EscapeDataString(callback)}&state={Uri.EscapeDataString(steamAuthListener.CurrentState)}";
             Process.Start(new ProcessStartInfo(loginUrl) { UseShellExecute = true });
             LoginStatusText.Text = "Si e aperta la pagina di accesso Steam nel browser.";
+        }
+        catch (HttpRequestException)
+        {
+            LoginStatusText.Text = "API non raggiungibile. Avvia Docker Desktop e usa 'docker compose up -d --build'.";
+        }
+        catch (TaskCanceledException)
+        {
+            LoginStatusText.Text = "API non raggiungibile: il server non ha risposto in tempo. Avvia Docker Desktop.";
         }
         catch (HttpListenerException exception)
         {
@@ -441,6 +475,8 @@ public partial class MainWindow : Window
         OverlayScaleSlider.Value = overlaySettings.Scale;
         OverlayOpacitySlider.Value = overlaySettings.Opacity;
         OverlayStartVisibleCheckBox.IsChecked = overlaySettings.StartVisible;
+        ToggleOverlayHotkeyTextBox.Text = overlaySettings.ToggleOverlayHotkey;
+        ToggleInteractionHotkeyTextBox.Text = overlaySettings.ToggleInteractionHotkey;
         UpdateSettingsLabels();
         loadingSettingsControls = false;
     }
@@ -486,6 +522,50 @@ public partial class MainWindow : Window
         };
         overlaySettingsStore.Save(overlaySettings);
         overlay.ApplySettings(overlaySettings);
+    }
+
+    private void HotkeyTextBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        e.Handled = true;
+        Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+        ModifierKeys modifiers = Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Shift | ModifierKeys.Windows);
+        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin || modifiers == ModifierKeys.None)
+        {
+            HotkeyCaptureHintText.Text = "Usa almeno un modificatore (Ctrl, Alt, Shift o Win) insieme a un altro tasto.";
+            return;
+        }
+
+        string hotkey = FormatHotkey(modifiers, key);
+        if (sender == ToggleOverlayHotkeyTextBox)
+        {
+            overlaySettings = overlaySettings with { ToggleOverlayHotkey = hotkey };
+            ToggleOverlayHotkeyTextBox.Text = hotkey;
+        }
+        else
+        {
+            overlaySettings = overlaySettings with { ToggleInteractionHotkey = hotkey };
+            ToggleInteractionHotkeyTextBox.Text = hotkey;
+        }
+
+        overlaySettingsStore.Save(overlaySettings);
+        RegisterConfiguredHotKeys();
+        HotkeyCaptureHintText.Text = $"Scorciatoia salvata: {hotkey}. E applicata subito. Clicca l'altro riquadro per modificarlo.";
+    }
+
+    private void HotkeyTextBox_GotFocus(object sender, RoutedEventArgs e)
+    {
+        HotkeyCaptureHintText.Text = "Registrazione attiva: ora premi insieme almeno un modificatore (Ctrl, Alt, Shift o Win) e il tasto finale.";
+    }
+
+    private static string FormatHotkey(ModifierKeys modifiers, Key key)
+    {
+        var parts = new List<string>();
+        if (modifiers.HasFlag(ModifierKeys.Control)) parts.Add("Ctrl");
+        if (modifiers.HasFlag(ModifierKeys.Alt)) parts.Add("Alt");
+        if (modifiers.HasFlag(ModifierKeys.Shift)) parts.Add("Shift");
+        if (modifiers.HasFlag(ModifierKeys.Windows)) parts.Add("Win");
+        parts.Add(key.ToString());
+        return string.Join("+", parts);
     }
 
     private async void AnalyticsSearch_Click(object sender, RoutedEventArgs args)
@@ -556,17 +636,36 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnSteamAuthenticated(object? sender, SteamAuthenticatedEventArgs args)
+    private async void OnSteamAuthenticated(object? sender, SteamAuthenticatedEventArgs args)
     {
-        Dispatcher.Invoke(() =>
+        try
         {
-            authSessionStore.SaveSession(args.SteamId, args.AccessToken);
-            ShowAuthenticatedDashboard(args.SteamId);
-            _ = ImportProfileHistoryAsync();
-            _ = SyncLiveRunAsync(args.AccessToken);
-            _ = SyncOpponentCacheAsync(args.AccessToken);
-            LoginStatusText.Text = "Accesso Steam completato.";
-        });
+            AuthSessionData? session = await remoteSyncClient.ExchangeAuthCodeAsync(args.Code);
+            if (session is null)
+            {
+                Dispatcher.Invoke(() => LoginStatusText.Text = "Il codice Steam non e stato accettato dall'API.");
+                return;
+            }
+
+            Dispatcher.Invoke(() =>
+            {
+                authSessionStore.SaveSession(session.SteamId, session.AccessToken, session.RefreshToken);
+                ShowAuthenticatedDashboard(session.SteamId);
+                _ = LoadAuthenticatedProfileAsync(session.AccessToken);
+                _ = ImportProfileHistoryAsync();
+                _ = SyncLiveRunAsync(session.AccessToken);
+                _ = SyncOpponentCacheAsync(session.AccessToken);
+                LoginStatusText.Text = "Accesso Steam completato.";
+            });
+        }
+        catch (HttpRequestException)
+        {
+            Dispatcher.Invoke(() => LoginStatusText.Text = "API non raggiungibile durante la conferma del login.");
+        }
+        catch (TaskCanceledException)
+        {
+            Dispatcher.Invoke(() => LoginStatusText.Text = "Timeout durante la conferma del login Steam.");
+        }
     }
 
     private void ShowAuthenticatedDashboard(string steamId)
@@ -579,10 +678,82 @@ public partial class MainWindow : Window
         UpdateProfileMenu(true);
     }
 
+    private async Task LoadAuthenticatedProfileAsync(string accessToken)
+    {
+        try
+        {
+            SteamProfile? profile = await remoteSyncClient.GetCurrentProfileAsync(accessToken);
+            if (profile is null)
+            {
+                return;
+            }
+
+            Dispatcher.Invoke(() =>
+            {
+                ProfileDisplayNameText.Text = string.IsNullOrWhiteSpace(profile.DisplayName) ? "Profilo Steam" : profile.DisplayName;
+                ProfileSteamIdText.Text = $"SteamID {profile.SteamId}";
+            });
+
+            if (string.IsNullOrWhiteSpace(profile.AvatarUrl))
+            {
+                return;
+            }
+
+            if (!Uri.TryCreate(profile.AvatarUrl, UriKind.Absolute, out Uri? avatarUri) ||
+                !string.Equals(avatarUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+                !(avatarUri.Host.Equals("steamcommunity.com", StringComparison.OrdinalIgnoreCase) ||
+                  avatarUri.Host.EndsWith(".steamstatic.com", StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            using HttpClient client = new() { Timeout = TimeSpan.FromSeconds(5) };
+            using HttpResponseMessage avatarResponse = await client.GetAsync(avatarUri, HttpCompletionOption.ResponseHeadersRead);
+            avatarResponse.EnsureSuccessStatusCode();
+            if (avatarResponse.Content.Headers.ContentLength is > 2_000_000)
+            {
+                return;
+            }
+
+            await using Stream avatarStream = await avatarResponse.Content.ReadAsStreamAsync();
+            using var avatarBuffer = new MemoryStream();
+            await avatarStream.CopyToAsync(avatarBuffer);
+            if (avatarBuffer.Length > 2_000_000)
+            {
+                return;
+            }
+
+            byte[] bytes = avatarBuffer.ToArray();
+            using var stream = new MemoryStream(bytes);
+            var image = new System.Windows.Media.Imaging.BitmapImage();
+            image.BeginInit();
+            image.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            image.StreamSource = stream;
+            image.EndInit();
+            image.Freeze();
+            Dispatcher.Invoke(() =>
+            {
+                ProfileAvatarImage.Source = image;
+                ProfileAvatarImage.Visibility = Visibility.Visible;
+                ProfileFallbackIcon.Visibility = Visibility.Collapsed;
+                ProfilePopupAvatarImage.Source = image;
+                ProfilePopupAvatarImage.Visibility = Visibility.Visible;
+                ProfilePopupFallbackIcon.Visibility = Visibility.Collapsed;
+            });
+        }
+        catch (HttpRequestException)
+        {
+            // The dashboard remains usable when the profile image service is unavailable.
+        }
+        catch (TaskCanceledException)
+        {
+            // A profile timeout must not interrupt the tracker.
+        }
+    }
+
     private void ProfileButton_Click(object sender, RoutedEventArgs args)
     {
-        ProfileMenu.PlacementTarget = ProfileButton;
-        ProfileMenu.IsOpen = true;
+        ProfilePopup.IsOpen = !ProfilePopup.IsOpen;
     }
 
     private void ProfileLogin_Click(object sender, RoutedEventArgs args)
@@ -594,11 +765,19 @@ public partial class MainWindow : Window
     {
         authSessionStore.Clear();
         steamAuthListener.Dispose();
-        ProfileMenu.IsOpen = false;
+        ProfilePopup.IsOpen = false;
         DashboardPanel.Visibility = Visibility.Collapsed;
         LoginPanel.Visibility = Visibility.Visible;
         ConnectionText.Text = "LOCAL MODE";
         LoginStatusText.Text = "Sessione Steam chiusa. I dati locali sono rimasti intatti.";
+        ProfileDisplayNameText.Text = "Modalita locale";
+        ProfileSteamIdText.Text = "Non connesso";
+        ProfileAvatarImage.Source = null;
+        ProfileAvatarImage.Visibility = Visibility.Collapsed;
+        ProfileFallbackIcon.Visibility = Visibility.Visible;
+        ProfilePopupAvatarImage.Source = null;
+        ProfilePopupAvatarImage.Visibility = Visibility.Collapsed;
+        ProfilePopupFallbackIcon.Visibility = Visibility.Visible;
         UpdateProfileMenu(false);
     }
 
@@ -615,6 +794,11 @@ public partial class MainWindow : Window
             IReadOnlyList<StoredRunSummary> summaries = await store.GetRunSummariesAsync();
             IReadOnlyList<CompletedRun> completedRuns = await store.GetCompletedRunsAsync();
             lastCompletedRuns = completedRuns;
+            UpdatePersonalStats(completedRuns);
+            if (authSessionStore.Load() is AuthSessionData statsSession && !string.IsNullOrWhiteSpace(statsSession.AccessToken))
+            {
+                _ = LoadRemotePersonalStatsAsync(statsSession.AccessToken);
+            }
             await LoadGlobalHomeStatsAsync();
             string[] liveRows = summaries.Select(summary =>
                 $"{summary.LastSeen.ToLocalTime():g} | {summary.TrainerId ?? "trainer n/d"}\n" +
@@ -1113,6 +1297,11 @@ public partial class MainWindow : Window
 
     private async Task SyncLiveRunAsync(string accessToken)
     {
+        await SyncLiveRunAsync(null, Array.Empty<TrackerEvent>(), accessToken);
+    }
+
+    private async Task SyncLiveRunAsync(RunState? suppliedState, IReadOnlyList<TrackerEvent> events, string accessToken)
+    {
         try
         {
             AccountFiles? account = new GodotSaveLocator().FindActiveAccount();
@@ -1121,9 +1310,8 @@ public partial class MainWindow : Window
                 return;
             }
 
-            string json = await File.ReadAllTextAsync(account.RunSavePath);
-            RunState state = new RunSaveParser().Parse(json);
-            await remoteSyncClient.SyncLiveRunAsync(state, accessToken);
+            RunState state = suppliedState ?? new RunSaveParser().Parse(await File.ReadAllTextAsync(account.RunSavePath));
+            await remoteSyncClient.SyncLiveRunAsync(state, accessToken, events);
             Dispatcher.Invoke(() => StatusText.Text = "Scansione iniziale completata: run live sincronizzata.");
         }
         catch (HttpRequestException)
@@ -1188,8 +1376,180 @@ public partial class MainWindow : Window
     {
         IntPtr handle = new WindowInteropHelper(this).Handle;
         HwndSource.FromHwnd(handle)?.AddHook(HandleHotKey);
-        RegisterHotKey(handle, ToggleOverlayHotKeyId, ModControl | ModShift, VkO);
-        RegisterHotKey(handle, ToggleInteractionHotKeyId, ModControl | ModShift, VkL);
+        RegisterConfiguredHotKeys();
+    }
+
+    private void RegisterConfiguredHotKeys()
+    {
+        IntPtr handle = new WindowInteropHelper(this).Handle;
+        UnregisterHotKey(handle, ToggleOverlayHotKeyId);
+        UnregisterHotKey(handle, ToggleInteractionHotKeyId);
+
+        bool overlayRegistered = TryRegisterHotKey(handle, ToggleOverlayHotKeyId, overlaySettings.ToggleOverlayHotkey);
+        bool interactionRegistered = TryRegisterHotKey(handle, ToggleInteractionHotKeyId, overlaySettings.ToggleInteractionHotkey);
+        if (!overlayRegistered || !interactionRegistered)
+        {
+            StatusText.Text = "Una scorciatoia non e disponibile: potrebbe essere gia usata da un'altra applicazione.";
+        }
+    }
+
+    private void UpdatePersonalStats(IReadOnlyList<CompletedRun> runs)
+    {
+        runs = personalStatsFilter switch
+        {
+            "ranked" => runs.Where(run => run.IsRanked == true).ToArray(),
+            "unranked" => runs.Where(run => run.IsRanked != true).ToArray(),
+            _ => runs
+        };
+        int completed = runs.Count;
+        int wins = runs.Count(IsVictory);
+        double winRate = completed == 0 ? 0 : (double)wins / completed;
+        double averageWins = completed == 0 ? 0 : runs.Average(run => run.Wins ?? 0);
+
+        var trainerStats = runs
+            .Where(run => !string.IsNullOrWhiteSpace(run.TrainerId))
+            .GroupBy(run => run.TrainerId!, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new
+            {
+                Name = group.Key,
+                Runs = group.Count(),
+                Wins = group.Count(IsVictory)
+            })
+            .OrderByDescending(item => item.Wins)
+            .ThenByDescending(item => item.Runs)
+            .Take(3)
+            .ToArray();
+
+        var batomonStats = runs
+            .SelectMany(run => ParseSpecies(run.TeamJson).Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(species => new { Species = species, Won = IsVictory(run) }))
+            .GroupBy(item => item.Species, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new
+            {
+                Name = group.Key,
+                Runs = group.Count(),
+                Wins = group.Count(item => item.Won)
+            })
+            .OrderByDescending(item => item.Wins)
+            .ThenByDescending(item => item.Runs)
+            .Take(3)
+            .ToArray();
+
+        ApplyPersonalStats(new PersonalStats(
+            completed,
+            wins,
+            winRate,
+            averageWins,
+            trainerStats.Select(item => new TrainerStats(item.Name, item.Runs, item.Wins, (double)item.Wins / item.Runs)).ToArray(),
+            batomonStats.Select(item => new BatomonStats(item.Name, item.Runs, item.Wins, (double)item.Wins / item.Runs)).ToArray()));
+    }
+
+    private async void PersonalStatsFilter_Changed(object sender, SelectionChangedEventArgs args)
+    {
+        if (PersonalStatsFilterComboBox.SelectedItem is not ComboBoxItem item || item.Tag is not string filter)
+        {
+            return;
+        }
+
+        personalStatsFilter = filter;
+        AuthSessionData? session = authSessionStore.Load();
+        if (session is not null && !string.IsNullOrWhiteSpace(session.AccessToken))
+        {
+            await LoadRemotePersonalStatsAsync(session.AccessToken);
+        }
+        else
+        {
+            UpdatePersonalStats(lastCompletedRuns);
+        }
+    }
+
+    private async Task LoadRemotePersonalStatsAsync(string accessToken)
+    {
+        try
+        {
+            PersonalStats? stats = await remoteSyncClient.GetPersonalStatsAsync(accessToken, personalStatsFilter);
+            if (stats is not null)
+            {
+                ApplyPersonalStats(stats);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            UpdatePersonalStats(lastCompletedRuns);
+        }
+        catch (TaskCanceledException)
+        {
+            UpdatePersonalStats(lastCompletedRuns);
+        }
+    }
+
+    private void ApplyPersonalStats(PersonalStats stats)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            PersonalStatsSummaryText.Text = stats.CompletedRuns == 0
+                ? "Nessuna run completata disponibile."
+                : $"{stats.CompletedRuns} run · {stats.CompletedWins} vittorie · winrate {stats.WinRate:P1} · media {stats.AverageWins:F1} vittorie/run";
+            PersonalTrainerStatsText.Text = stats.ByTrainer.Count == 0
+                ? "Dati trainer non disponibili."
+                : string.Join("\n", stats.ByTrainer.Take(3).Select(item => $"{item.TrainerId}: {item.Wins}/{item.Runs} · {item.WinRate:P1}"));
+            PersonalBatomonStatsText.Text = stats.ByBatomon.Count == 0
+                ? "Dati Batomon non disponibili."
+                : string.Join("\n", stats.ByBatomon.Take(3).Select(item => $"{item.SpeciesId}: {item.Wins}/{item.Runs} · {item.WinRate:P1}"));
+        });
+    }
+
+    private static bool TryRegisterHotKey(IntPtr handle, int id, string value)
+    {
+        if (!TryParseHotkey(value, out uint modifiers, out uint key))
+        {
+            return false;
+        }
+
+        return RegisterHotKey(handle, id, modifiers, key);
+    }
+
+    private static bool TryParseHotkey(string value, out uint modifiers, out uint key)
+    {
+        modifiers = 0;
+        key = 0;
+        string[] parts = value.Split('+', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2)
+        {
+            return false;
+        }
+
+        string keyPart = parts[^1];
+        if (!Enum.TryParse(keyPart, true, out Key parsedKey) || parsedKey == Key.None)
+        {
+            return false;
+        }
+
+        foreach (string modifier in parts[..^1])
+        {
+            switch (modifier.ToLowerInvariant())
+            {
+                case "ctrl":
+                case "control":
+                    modifiers |= ModControl;
+                    break;
+                case "alt":
+                    modifiers |= 0x0001;
+                    break;
+                case "shift":
+                    modifiers |= ModShift;
+                    break;
+                case "win":
+                case "windows":
+                    modifiers |= 0x0008;
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        key = (uint)KeyInterop.VirtualKeyFromKey(parsedKey);
+        return modifiers != 0 && key != 0;
     }
 
     private void UnregisterHotKeys()

@@ -7,6 +7,11 @@ using Microsoft.IdentityModel.Tokens;
 using Npgsql;
 using NpgsqlTypes;
 using System.Text.Json;
+using System.Xml.Linq;
+using System.Xml;
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHttpClient();
@@ -15,11 +20,36 @@ builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MaxRequestBodySize = 256L * 1024L * 1024L;
 });
 
-string jwtSecret = builder.Configuration["Jwt:Secret"] ?? "change-this-development-secret-at-least-32-chars";
-string jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "batomon-tracker";
+string jwtSecret = builder.Configuration["Jwt:Secret"]
+    ?? throw new InvalidOperationException("Jwt:Secret must be configured.");
+if (Encoding.UTF8.GetByteCount(jwtSecret) < 32)
+{
+    throw new InvalidOperationException("Jwt:Secret must contain at least 32 bytes.");
+}
+
+string jwtIssuer = builder.Configuration["Jwt:Issuer"]
+    ?? throw new InvalidOperationException("Jwt:Issuer must be configured.");
 string jwtAudience = builder.Configuration["Jwt:Audience"] ?? "batomon-tracker-client";
-string connectionString = builder.Configuration.GetConnectionString("Postgres") ??
-                          "Host=localhost;Port=5432;Database=batomon;Username=batomon;Password=change-me-local";
+string connectionString = builder.Configuration.GetConnectionString("Postgres")
+    ?? throw new InvalidOperationException("ConnectionStrings:Postgres must be configured.");
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 120,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+});
+
+const string LocalCallbackUrl = "http://127.0.0.1:48721/auth/callback/";
+var pendingAuthStates = new ConcurrentDictionary<string, PendingAuthState>(StringComparer.Ordinal);
+var pendingAuthCodes = new ConcurrentDictionary<string, PendingAuthCode>(StringComparer.Ordinal);
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -43,6 +73,7 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 app.MapGet("/", () => Results.Text("Batomon Tracker API is running."));
 
@@ -58,7 +89,8 @@ app.MapGet("/health", async () =>
     }
     catch (NpgsqlException exception)
     {
-        return Results.Problem($"Database unavailable: {exception.Message}");
+        app.Logger.LogError(exception, "Health check database failure.");
+        return Results.Json(new { status = "error", database = "unavailable" }, statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 });
 
@@ -67,13 +99,14 @@ app.MapGet("/auth/steam/login", (HttpRequest request) =>
     string returnUrl = request.Query["return_url"].ToString();
     string state = request.Query["state"].ToString();
     if (!Uri.TryCreate(returnUrl, UriKind.Absolute, out Uri? callbackUri) ||
-        !callbackUri.IsLoopback ||
+        !string.Equals(returnUrl, LocalCallbackUrl + "?state=" + Uri.EscapeDataString(state), StringComparison.Ordinal) ||
         string.IsNullOrWhiteSpace(state))
     {
         return Results.BadRequest("Callback locale non valido.");
     }
 
-    string callback = $"{request.Scheme}://{request.Host}/auth/steam/callback?return_url={Uri.EscapeDataString(returnUrl)}&state={Uri.EscapeDataString(state)}";
+    pendingAuthStates[state] = new PendingAuthState(returnUrl, DateTimeOffset.UtcNow.AddMinutes(5));
+    string callback = $"{request.Scheme}://{request.Host}/auth/steam/callback?state={Uri.EscapeDataString(state)}";
     string realm = $"{request.Scheme}://{request.Host}";
     var parameters = new Dictionary<string, string>
     {
@@ -95,6 +128,20 @@ app.MapGet("/auth/steam/callback", async (HttpRequest request, IHttpClientFactor
     if (!string.Equals(request.Query["openid.mode"].ToString(), "id_res", StringComparison.Ordinal))
     {
         return Results.BadRequest("Steam login non completato.");
+    }
+
+    string state = request.Query["state"].ToString();
+    if (string.IsNullOrWhiteSpace(state) ||
+        !pendingAuthStates.TryRemove(state, out PendingAuthState? pendingState) ||
+        pendingState.ExpiresAt <= DateTimeOffset.UtcNow)
+    {
+        return Results.BadRequest("Sessione di autenticazione scaduta o non valida.");
+    }
+
+    string expectedReturnTo = $"{request.Scheme}://{request.Host}/auth/steam/callback?state={Uri.EscapeDataString(state)}";
+    if (!string.Equals(request.Query["openid.return_to"].ToString(), expectedReturnTo, StringComparison.Ordinal))
+    {
+        return Results.BadRequest("Callback Steam non valido.");
     }
 
     var verification = request.Query
@@ -119,29 +166,123 @@ app.MapGet("/auth/steam/callback", async (HttpRequest request, IHttpClientFactor
     }
 
     string steamId = match.Groups[1].Value;
-    string returnUrl = request.Query["return_url"].ToString();
-    string state = request.Query["state"].ToString();
-    if (!Uri.TryCreate(returnUrl, UriKind.Absolute, out Uri? callbackUri) || !callbackUri.IsLoopback)
+    string? displayName = null;
+    string? avatarUrl = null;
+    try
     {
-        return Results.BadRequest("Callback locale non valido.");
+        using HttpClient profileClient = clients.CreateClient();
+        profileClient.Timeout = TimeSpan.FromSeconds(8);
+        string profileXml = await profileClient.GetStringAsync($"https://steamcommunity.com/profiles/{steamId}?xml=1");
+        XDocument profileDocument = XDocument.Parse(profileXml);
+        displayName = profileDocument.Root?.Element("steamID")?.Value;
+        avatarUrl = profileDocument.Root?.Element("avatarFull")?.Value;
+    }
+    catch (HttpRequestException)
+    {
+        // Authentication remains valid even if Steam profile metadata is temporarily unavailable.
+    }
+    catch (TaskCanceledException)
+    {
+        // Authentication remains valid even if Steam profile metadata times out.
+    }
+    catch (XmlException)
+    {
+        // Ignore malformed profile metadata and keep the SteamID.
     }
 
+    Guid userId;
     await using (var connection = new NpgsqlConnection(connectionString))
     {
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand("""
-            INSERT INTO users (steam_id, last_login_at)
-            VALUES (@steam_id, NOW())
-            ON CONFLICT (steam_id) DO UPDATE SET last_login_at = NOW()
+            INSERT INTO users (steam_id, display_name, avatar_url, last_login_at)
+            VALUES (@steam_id, @display_name, @avatar_url, NOW())
+            ON CONFLICT (steam_id) DO UPDATE SET
+                display_name = COALESCE(EXCLUDED.display_name, users.display_name),
+                avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url),
+                last_login_at = NOW()
             RETURNING id;
             """, connection);
         command.Parameters.AddWithValue("steam_id", steamId);
-        await command.ExecuteScalarAsync();
+        command.Parameters.AddWithValue("display_name", (object?)displayName ?? DBNull.Value);
+        command.Parameters.AddWithValue("avatar_url", (object?)avatarUrl ?? DBNull.Value);
+        userId = (Guid)(await command.ExecuteScalarAsync() ?? throw new InvalidOperationException("User was not saved."));
     }
 
-    string token = CreateToken(steamId, jwtSecret, jwtIssuer, jwtAudience);
-    string separator = returnUrl.Contains('?', StringComparison.Ordinal) ? "&" : "?";
-    return Results.Redirect($"{returnUrl}{separator}steamid={Uri.EscapeDataString(steamId)}&token={Uri.EscapeDataString(token)}");
+    string code = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+    string refreshToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+    await using (var connection = new NpgsqlConnection(connectionString))
+    {
+        await connection.OpenAsync();
+        await using var sessionCommand = new NpgsqlCommand("""
+            INSERT INTO auth_sessions (user_id, refresh_token_hash, expires_at)
+            VALUES (@user_id, @refresh_token_hash, NOW() + INTERVAL '30 days');
+            """, connection);
+        sessionCommand.Parameters.AddWithValue("user_id", userId);
+        sessionCommand.Parameters.AddWithValue("refresh_token_hash", HashToken(refreshToken));
+        await sessionCommand.ExecuteNonQueryAsync();
+    }
+
+    pendingAuthCodes[code] = new PendingAuthCode(
+        steamId,
+        CreateToken(steamId, jwtSecret, jwtIssuer, jwtAudience),
+        refreshToken,
+        DateTimeOffset.UtcNow.AddMinutes(1));
+    return Results.Redirect($"{pendingState.ReturnUrl}&code={Uri.EscapeDataString(code)}");
+});
+
+app.MapPost("/auth/token", (AuthCodeExchangeRequest payload) =>
+{
+    if (string.IsNullOrWhiteSpace(payload.Code) ||
+        !pendingAuthCodes.TryRemove(payload.Code, out PendingAuthCode? pendingCode) ||
+        pendingCode.ExpiresAt <= DateTimeOffset.UtcNow)
+    {
+        return Results.Unauthorized();
+    }
+
+    return Results.Ok(new { steamId = pendingCode.SteamId, accessToken = pendingCode.AccessToken, refreshToken = pendingCode.RefreshToken });
+});
+
+app.MapPost("/auth/refresh", async (RefreshTokenRequest payload) =>
+{
+    if (string.IsNullOrWhiteSpace(payload.RefreshToken))
+    {
+        return Results.Unauthorized();
+    }
+
+    await using var connection = new NpgsqlConnection(connectionString);
+    await connection.OpenAsync();
+    await using var transaction = await connection.BeginTransactionAsync();
+    await using var findCommand = new NpgsqlCommand("""
+        SELECT s.id, u.steam_id
+        FROM auth_sessions s JOIN users u ON u.id = s.user_id
+        WHERE s.refresh_token_hash = @hash
+          AND s.revoked_at IS NULL
+          AND s.expires_at > NOW();
+        """, connection, transaction);
+    findCommand.Parameters.AddWithValue("hash", HashToken(payload.RefreshToken));
+    await using NpgsqlDataReader reader = await findCommand.ExecuteReaderAsync();
+    if (!await reader.ReadAsync())
+    {
+        return Results.Unauthorized();
+    }
+
+    Guid sessionId = reader.GetGuid(0);
+    string steamId = reader.GetString(1);
+    await reader.CloseAsync();
+    await using var revokeCommand = new NpgsqlCommand("UPDATE auth_sessions SET revoked_at = NOW() WHERE id = @id;", connection, transaction);
+    revokeCommand.Parameters.AddWithValue("id", sessionId);
+    await revokeCommand.ExecuteNonQueryAsync();
+    string newRefreshToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+    await using var insertCommand = new NpgsqlCommand("""
+        INSERT INTO auth_sessions (user_id, refresh_token_hash, expires_at)
+        SELECT user_id, @hash, NOW() + INTERVAL '30 days' FROM auth_sessions WHERE id = @id;
+        """, connection, transaction);
+    insertCommand.Parameters.AddWithValue("hash", HashToken(newRefreshToken));
+    insertCommand.Parameters.AddWithValue("id", sessionId);
+    await insertCommand.ExecuteNonQueryAsync();
+    await transaction.CommitAsync();
+    return Results.Ok(new { steamId, accessToken = CreateToken(steamId, jwtSecret, jwtIssuer, jwtAudience), refreshToken = newRefreshToken });
 });
 
 app.MapGet("/api/me", async (ClaimsPrincipal user) =>
@@ -157,12 +298,100 @@ app.MapGet("/api/me", async (ClaimsPrincipal user) =>
         : Results.NotFound();
 }).RequireAuthorization();
 
+app.MapGet("/api/me/stats", async (ClaimsPrincipal user, string? filter) =>
+{
+    string steamId = user.FindFirstValue("steam_id") ?? string.Empty;
+    bool? rankedFilter = filter?.Trim().ToLowerInvariant() switch
+    {
+        "ranked" => true,
+        "unranked" => false,
+        _ => null
+    };
+    object rankedValue = rankedFilter.HasValue ? rankedFilter.Value : DBNull.Value;
+    await using var connection = new NpgsqlConnection(connectionString);
+    await connection.OpenAsync();
+
+    await using var summaryCommand = new NpgsqlCommand("""
+        SELECT COUNT(*)::int,
+               COUNT(*) FILTER (WHERE wins >= 10 OR LOWER(outcome) = 'won')::int,
+               COALESCE(AVG(wins), 0)
+        FROM runs r JOIN users u ON u.id = r.user_id
+        WHERE u.steam_id = @steam_id
+          AND r.ended_at IS NOT NULL
+          AND (CAST(@ranked_filter AS boolean) IS NULL OR r.is_ranked = CAST(@ranked_filter AS boolean));
+        """, connection);
+    summaryCommand.Parameters.AddWithValue("steam_id", steamId);
+    summaryCommand.Parameters.AddWithValue("ranked_filter", rankedValue);
+    await using NpgsqlDataReader summaryReader = await summaryCommand.ExecuteReaderAsync();
+    await summaryReader.ReadAsync();
+    int completedRuns = summaryReader.GetInt32(0);
+    int completedWins = summaryReader.GetInt32(1);
+    double averageWins = summaryReader.GetDouble(2);
+    await summaryReader.CloseAsync();
+
+    await using var trainerCommand = new NpgsqlCommand("""
+        SELECT COALESCE(r.trainer_id, 'unknown'), COUNT(*)::int,
+               COUNT(*) FILTER (WHERE r.wins >= 10 OR LOWER(r.outcome) = 'won')::int
+        FROM runs r JOIN users u ON u.id = r.user_id
+        WHERE u.steam_id = @steam_id AND r.ended_at IS NOT NULL
+          AND (CAST(@ranked_filter AS boolean) IS NULL OR r.is_ranked = CAST(@ranked_filter AS boolean))
+        GROUP BY r.trainer_id ORDER BY 3 DESC, 2 DESC LIMIT 20;
+        """, connection);
+    trainerCommand.Parameters.AddWithValue("steam_id", steamId);
+    trainerCommand.Parameters.AddWithValue("ranked_filter", rankedValue);
+    await using NpgsqlDataReader trainerReader = await trainerCommand.ExecuteReaderAsync();
+    var trainers = new List<object>();
+    while (await trainerReader.ReadAsync())
+    {
+        int runs = trainerReader.GetInt32(1);
+        int wins = trainerReader.GetInt32(2);
+        trainers.Add(new { trainerId = trainerReader.GetString(0), runs, wins, winRate = runs == 0 ? 0 : (double)wins / runs });
+    }
+    await trainerReader.CloseAsync();
+
+    await using var batomonCommand = new NpgsqlCommand("""
+        SELECT ru.species_id, COUNT(DISTINCT r.id)::int,
+               COUNT(DISTINCT r.id) FILTER (WHERE r.wins >= 10 OR LOWER(r.outcome) = 'won')::int
+        FROM run_units ru
+        JOIN runs r ON r.id = ru.run_id
+        JOIN users u ON u.id = r.user_id
+        WHERE u.steam_id = @steam_id AND r.ended_at IS NOT NULL AND ru.location = 'team'
+          AND (CAST(@ranked_filter AS boolean) IS NULL OR r.is_ranked = CAST(@ranked_filter AS boolean))
+        GROUP BY ru.species_id ORDER BY 3 DESC, 2 DESC LIMIT 20;
+        """, connection);
+    batomonCommand.Parameters.AddWithValue("steam_id", steamId);
+    batomonCommand.Parameters.AddWithValue("ranked_filter", rankedValue);
+    await using NpgsqlDataReader batomonReader = await batomonCommand.ExecuteReaderAsync();
+    var batomon = new List<object>();
+    while (await batomonReader.ReadAsync())
+    {
+        int runs = batomonReader.GetInt32(1);
+        int wins = batomonReader.GetInt32(2);
+        batomon.Add(new { speciesId = batomonReader.GetString(0), runs, wins, winRate = runs == 0 ? 0 : (double)wins / runs });
+    }
+
+    return Results.Ok(new
+    {
+        completedRuns,
+        completedWins,
+        winRate = completedRuns == 0 ? 0 : (double)completedWins / completedRuns,
+        averageWins,
+        byTrainer = trainers,
+        byBatomon = batomon
+    });
+}).RequireAuthorization();
+
 app.MapPost("/api/sync/runs", async (ClaimsPrincipal user, SyncRunRequest payload) =>
 {
     string steamId = user.FindFirstValue("steam_id") ?? string.Empty;
-    if (string.IsNullOrWhiteSpace(payload.ExternalRunId))
+    if (string.IsNullOrWhiteSpace(payload.ExternalRunId) ||
+        payload.ExternalRunId.Length > 160 ||
+        payload.Team is null || payload.Team.Count > 10 ||
+        payload.Bench is null || payload.Bench.Count > 20 ||
+        payload.Trinkets is null || payload.Trinkets.Count > 30 ||
+        payload.Events is null || payload.Events.Count > 50)
     {
-        return Results.BadRequest("external_run_id is required.");
+        return Results.BadRequest("Payload run non valido o troppo grande.");
     }
 
     await using var connection = new NpgsqlConnection(connectionString);
@@ -193,6 +422,22 @@ app.MapPost("/api/sync/runs", async (ClaimsPrincipal user, SyncRunRequest payloa
         await ExecuteAsync(connection, transaction, "INSERT INTO run_trinkets (run_id, trinket_id) VALUES (@run_id, @trinket_id);", ("run_id", runId), ("trinket_id", trinket));
     }
 
+    foreach (SyncEvent trackerEvent in payload.Events)
+    {
+        if (string.IsNullOrWhiteSpace(trackerEvent.EventType) || trackerEvent.EventType.Length > 64 ||
+            trackerEvent.Confidence.Length > 32 || trackerEvent.Payload.Count > 30)
+        {
+            return Results.BadRequest("Evento tracker non valido.");
+        }
+
+        await ExecuteAsync(connection, transaction, """
+            INSERT INTO run_events (run_id, save_seq, event_type, confidence, payload, detected_at)
+            VALUES (@run_id, @save_seq, @event_type, @confidence, @payload, @detected_at);
+            """, ("run_id", runId), ("save_seq", trackerEvent.SaveSequence),
+            ("event_type", trackerEvent.EventType), ("confidence", trackerEvent.Confidence),
+            ("payload", JsonSerializer.Serialize(trackerEvent.Payload)), ("detected_at", trackerEvent.DetectedAt));
+    }
+
     await transaction.CommitAsync();
     return Results.Ok(new { runId, synced = true });
 }).RequireAuthorization();
@@ -217,7 +462,7 @@ app.MapGet("/api/leaderboard", async () =>
     await using var connection = new NpgsqlConnection(connectionString);
     await connection.OpenAsync();
     await using var command = new NpgsqlCommand("""
-        SELECT u.display_name, u.steam_id, l.score, l.wins, l.games_played, l.rank
+        SELECT u.display_name, l.score, l.wins, l.games_played, l.rank
         FROM leaderboard_entries l
         JOIN users u ON u.id = l.user_id
         JOIN seasons s ON s.id = l.season_id AND s.is_active = TRUE
@@ -228,7 +473,7 @@ app.MapGet("/api/leaderboard", async () =>
     var entries = new List<object>();
     while (await reader.ReadAsync())
     {
-        entries.Add(new { displayName = reader.IsDBNull(0) ? null : reader.GetString(0), steamId = reader.GetString(1), score = reader.GetInt32(2), wins = reader.GetInt32(3), gamesPlayed = reader.GetInt32(4), rank = reader.IsDBNull(5) ? (int?)null : reader.GetInt32(5) });
+        entries.Add(new { displayName = reader.IsDBNull(0) ? null : reader.GetString(0), score = reader.GetInt32(1), wins = reader.GetInt32(2), gamesPlayed = reader.GetInt32(3), rank = reader.IsDBNull(4) ? (int?)null : reader.GetInt32(4) });
     }
 
     return Results.Ok(entries);
@@ -697,12 +942,30 @@ app.MapPost("/api/analytics/recommendation", async (GlobalRecommendationRequest 
 
 app.MapPost("/api/analytics/import", async (ClaimsPrincipal user, AnalyticsImportRequest payload) =>
 {
-    if (string.IsNullOrWhiteSpace(payload.Dataset.DatasetId) || payload.Snapshots.Count == 0)
+    if (string.IsNullOrWhiteSpace(payload.Dataset.DatasetId) || payload.Snapshots.Count == 0 || payload.Snapshots.Count > 1000)
     {
-        return Results.BadRequest("A dataset and at least one snapshot are required.");
+        return Results.BadRequest("Dataset non valido o numero di snapshot fuori limite.");
     }
 
     string steamId = user.FindFirstValue("steam_id") ?? string.Empty;
+    if (payload.Dataset.DatasetId.Length > 160 ||
+        payload.Dataset.FileName.Length > 255 ||
+        payload.Dataset.Mode.Length > 32 ||
+        payload.Dataset.SetId.Length > 64 ||
+        payload.Snapshots.Any(snapshot =>
+            snapshot.RawJson.Length > 200_000 ||
+            snapshot.Units is null || snapshot.Units.Count > 10 ||
+            snapshot.TrinketIds is null || snapshot.TrinketIds.Count > 30 ||
+            snapshot.UsedTrinketIds is null || snapshot.UsedTrinketIds.Count > 30 ||
+            snapshot.RunId.Length > 160 || snapshot.SnapshotHash.Length > 64 || snapshot.UserId.Length > 64))
+    {
+        return Results.BadRequest("Payload analytics non valido o troppo grande.");
+    }
+
+    payload = payload with
+    {
+        Snapshots = payload.Snapshots.Select(snapshot => snapshot with { UserId = steamId }).ToArray()
+    };
     await using var connection = new NpgsqlConnection(connectionString);
     await connection.OpenAsync();
     await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync();
@@ -731,8 +994,13 @@ static string CreateToken(string steamId, string secret, string issuer, string a
         new Claim(JwtRegisteredClaimNames.Sub, steamId),
         new Claim("steam_id", steamId)
     };
-    var token = new JwtSecurityToken(issuer, audience, claims, expires: DateTime.UtcNow.AddDays(7), signingCredentials: credentials);
+    var token = new JwtSecurityToken(issuer, audience, claims, expires: DateTime.UtcNow.AddMinutes(30), signingCredentials: credentials);
     return new JwtSecurityTokenHandler().WriteToken(token);
+}
+
+static string HashToken(string token)
+{
+    return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 }
 
 static async Task<Guid> GetUserIdAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string steamId)
@@ -919,13 +1187,21 @@ public sealed record SyncRunRequest(
     int? Lives,
     IReadOnlyList<SyncUnit> Team,
     IReadOnlyList<SyncUnit> Bench,
-    IReadOnlyList<string> Trinkets);
+    IReadOnlyList<string> Trinkets,
+    IReadOnlyList<SyncEvent> Events);
 
 public sealed record SyncUnit(
     int? Slot,
     string SpeciesId,
     int? Level,
     bool? IsShiny);
+
+public sealed record SyncEvent(
+    string EventType,
+    DateTimeOffset DetectedAt,
+    long? SaveSequence,
+    string Confidence,
+    IReadOnlyDictionary<string, string> Payload);
 
 public sealed record AnalyticsImportRequest(
     AnalyticsDatasetRequest Dataset,
@@ -977,3 +1253,11 @@ public sealed record GlobalRecommendationResponse(
     IReadOnlyList<string> RecommendedTrinkets,
     long ReferenceWins,
     int TeamOverlap);
+
+public sealed record AuthCodeExchangeRequest(string Code);
+
+internal sealed record PendingAuthState(string ReturnUrl, DateTimeOffset ExpiresAt);
+
+internal sealed record PendingAuthCode(string SteamId, string AccessToken, string RefreshToken, DateTimeOffset ExpiresAt);
+
+public sealed record RefreshTokenRequest(string RefreshToken);

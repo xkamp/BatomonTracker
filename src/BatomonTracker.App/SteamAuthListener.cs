@@ -34,11 +34,9 @@ public sealed class SteamAuthListener : IDisposable
         {
             HttpListenerContext context = await activeListener.GetContextAsync();
             string receivedState = context.Request.QueryString["state"] ?? string.Empty;
-            string steamId = context.Request.QueryString["steamid"] ?? string.Empty;
-            string accessToken = context.Request.QueryString["token"] ?? string.Empty;
+            string code = context.Request.QueryString["code"] ?? string.Empty;
             bool valid = string.Equals(receivedState, expectedState, StringComparison.Ordinal) &&
-                         !string.IsNullOrWhiteSpace(steamId) &&
-                         !string.IsNullOrWhiteSpace(accessToken);
+                         !string.IsNullOrWhiteSpace(code);
             string body = valid
                 ? "<html><body><h1>Accesso completato</h1><p>Puoi tornare a Batomon Tracker.</p></body></html>"
                 : "<html><body><h1>Accesso non valido</h1></body></html>";
@@ -50,7 +48,7 @@ public sealed class SteamAuthListener : IDisposable
 
             if (valid)
             {
-                Authenticated?.Invoke(this, new SteamAuthenticatedEventArgs(steamId, accessToken));
+                Authenticated?.Invoke(this, new SteamAuthenticatedEventArgs(code));
             }
         }
         catch (HttpListenerException)
@@ -77,13 +75,10 @@ public sealed class SteamAuthListener : IDisposable
 
 public sealed class SteamAuthenticatedEventArgs : EventArgs
 {
-    public SteamAuthenticatedEventArgs(string steamId, string accessToken)
+    public SteamAuthenticatedEventArgs(string code)
     {
-        SteamId = steamId;
-        AccessToken = accessToken;
+        Code = code;
     }
 
-    public string SteamId { get; }
-
-    public string AccessToken { get; }
+    public string Code { get; }
 }

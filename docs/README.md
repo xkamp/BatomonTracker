@@ -12,6 +12,8 @@ Documentazione tecnica e guida allo sviluppo del tracker locale per Batomon Show
 6. Consultare [Testing e robustezza](05-testing-e-robustezza.md) prima di considerare stabile una funzionalita.
 7. Seguire [Roadmap](06-roadmap.md) per pianificare le versioni successive.
 8. Consultare [Stato implementazione](07-stato-implementazione.md) per vedere cosa e gia stato costruito.
+9. Consultare [Sicurezza e deployment](09-security.md) prima di avviare API e database online.
+10. Consultare [Audit dati e statistiche](10-audit-dati-statistiche.md) per interpretare correttamente metriche e aggregazioni.
 
 ## Documenti di riferimento
 

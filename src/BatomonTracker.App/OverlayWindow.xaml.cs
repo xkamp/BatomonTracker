@@ -14,7 +14,19 @@ public partial class OverlayWindow : Window
 {
     private const int GwlExStyle = -20;
     private const int WmNcHitTest = 0x0084;
+    private const int WmExitSizeMove = 0x0232;
     private const int HtTransparent = -1;
+    private const int HtClient = 1;
+    private const int HtLeft = 10;
+    private const int HtRight = 11;
+    private const int HtTop = 12;
+    private const int HtTopLeft = 13;
+    private const int HtTopRight = 14;
+    private const int HtBottom = 15;
+    private const int HtBottomLeft = 16;
+    private const int HtBottomRight = 17;
+    private const int WsThickFrame = 0x00040000;
+    private const double ResizeBorder = 10;
     private const long WsExTransparent = 0x20L;
     private const long WsExNoActivate = 0x08000000L;
     private const long WsExToolWindow = 0x80L;
@@ -22,6 +34,7 @@ public partial class OverlayWindow : Window
     private HwndSource? hwndSource;
     private Rect? gameBounds;
     private readonly OverlayPositionStore positionStore;
+    private OverlaySettings overlaySettings = new();
     private readonly BatomonIconRepository iconRepository = new();
     private readonly BuildRecommendationEngine recommendationEngine = new();
     private double relativeLeft;
@@ -102,6 +115,9 @@ public partial class OverlayWindow : Window
 
     public void ApplySettings(OverlaySettings settings)
     {
+        overlaySettings = settings;
+        Width = settings.Width;
+        Height = settings.Height;
         LayoutTransform = new ScaleTransform(settings.Scale, settings.Scale);
         Opacity = settings.Opacity;
         autoShowEnabled = settings.StartVisible;
@@ -113,7 +129,7 @@ public partial class OverlayWindow : Window
         ApplyWindowMode();
         HintText.Text = clickThrough
             ? "Ctrl+Shift+O mostra/nasconde | Ctrl+Shift+L sblocca"
-            : "MODIFICA ATTIVA | Ctrl+Shift+L blocca";
+            : "MODIFICA ATTIVA | trascina qualsiasi bordo per ridimensionare | Ctrl+Shift+L blocca";
     }
 
     public void ToggleVisibility()
@@ -218,6 +234,11 @@ public partial class OverlayWindow : Window
         style = clickThrough ? style | WsExTransparent | WsExNoActivate : style & ~WsExTransparent & ~WsExNoActivate;
         SetWindowLongPtr(handle, GwlExStyle, new IntPtr(style));
 
+        long windowStyle = GetWindowLongPtr(handle, -16).ToInt64();
+        windowStyle = clickThrough ? windowStyle & ~WsThickFrame : windowStyle | WsThickFrame;
+        SetWindowLongPtr(handle, -16, new IntPtr(windowStyle));
+        SetWindowPos(handle, IntPtr.Zero, 0, 0, 0, 0, 0x0027);
+
         hwndSource ??= HwndSource.FromHwnd(handle);
         if (hwndSource is not null && !hwndSource.IsDisposed)
         {
@@ -228,13 +249,57 @@ public partial class OverlayWindow : Window
 
     private IntPtr WindowProc(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (message == WmNcHitTest && clickThrough)
+        if (message == WmNcHitTest)
         {
-            handled = true;
-            return new IntPtr(HtTransparent);
+            if (clickThrough)
+            {
+                handled = true;
+                return new IntPtr(HtTransparent);
+            }
+
+            int hitTest = GetResizeHitTest();
+            if (hitTest != HtClient)
+            {
+                handled = true;
+                return new IntPtr(hitTest);
+            }
+        }
+
+        if (message == WmExitSizeMove && !clickThrough)
+        {
+            SaveSize();
         }
 
         return IntPtr.Zero;
+    }
+
+    private void SaveSize()
+    {
+        overlaySettings = overlaySettings with { Width = Width, Height = Height };
+        new OverlaySettingsStore().Save(overlaySettings);
+    }
+
+    private int GetResizeHitTest()
+    {
+        GetCursorPos(out PointPixels cursor);
+        System.Windows.Point point = PointFromScreen(new System.Windows.Point(cursor.X, cursor.Y));
+        bool left = point.X <= ResizeBorder;
+        bool right = point.X >= ActualWidth - ResizeBorder;
+        bool top = point.Y <= ResizeBorder;
+        bool bottom = point.Y >= ActualHeight - ResizeBorder;
+
+        return (left, right, top, bottom) switch
+        {
+            (true, false, true, false) => HtTopLeft,
+            (false, true, true, false) => HtTopRight,
+            (true, false, false, true) => HtBottomLeft,
+            (false, true, false, true) => HtBottomRight,
+            (true, false, false, false) => HtLeft,
+            (false, true, false, false) => HtRight,
+            (false, false, true, false) => HtTop,
+            (false, false, false, true) => HtBottom,
+            _ => HtClient
+        };
     }
 
     private static IntPtr GetWindowLongPtr(IntPtr handle, int index)
@@ -265,4 +330,17 @@ public partial class OverlayWindow : Window
 
     [DllImport("user32.dll", EntryPoint = "SetWindowLong", SetLastError = true)]
     private static extern int SetWindowLong32(IntPtr handle, int index, int value);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out PointPixels point);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(IntPtr handle, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PointPixels
+    {
+        public int X;
+        public int Y;
+    }
 }

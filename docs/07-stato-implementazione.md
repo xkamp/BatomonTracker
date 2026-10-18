@@ -75,6 +75,9 @@ tests/
 - suggerimento acquisto quando lo shop contiene una specie gia presente nella build;
 - aggiornamenti delle statistiche sincronizzati sul thread UI;
 - apertura e chiusura automatica insieme alla finestra del gioco;
+- statistiche personali nella Home con winrate, media vittorie, trainer e Batomon piu vincenti;
+- filtri personali ranked/non-ranked e statistiche recuperate da PostgreSQL quando autenticati;
+- visualizzazione di MMR, Ranked MMR, tier e stelle dal profilo locale;
 
 ### Non ancora implementato
 
@@ -84,7 +87,7 @@ tests/
 
 ## Verifica ambiente
 
-La soluzione e stata compilata con .NET SDK 8.0.425 senza warning. I test automatici sono verdi. Per ripetere la verifica:
+La soluzione e stata compilata con .NET SDK 8 senza warning. I test automatici sono verdi. Per ripetere la verifica:
 
 ```text
 dotnet restore BatomonTracker.sln

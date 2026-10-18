@@ -15,6 +15,62 @@ public sealed class RemoteSyncClient
     private readonly HttpClient client = new() { Timeout = TimeSpan.FromSeconds(20) };
     private readonly string apiBaseUrl = (Environment.GetEnvironmentVariable("BATOMON_API_URL") ?? "http://127.0.0.1:5000").TrimEnd('/');
 
+    public async Task<AuthSessionData?> ExchangeAuthCodeAsync(string code, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            return null;
+        }
+
+        using var content = new StringContent(
+            JsonSerializer.Serialize(new { code }),
+            Encoding.UTF8,
+            "application/json");
+        using HttpResponseMessage response = await client.PostAsync($"{apiBaseUrl}/auth/token", content, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using JsonDocument document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        JsonElement root = document.RootElement;
+        string? steamId = root.TryGetProperty("steamId", out JsonElement steamIdElement) ? steamIdElement.GetString() : null;
+        string? accessToken = root.TryGetProperty("accessToken", out JsonElement tokenElement) ? tokenElement.GetString() : null;
+        string? refreshToken = root.TryGetProperty("refreshToken", out JsonElement refreshElement) ? refreshElement.GetString() : null;
+        return string.IsNullOrWhiteSpace(steamId) || string.IsNullOrWhiteSpace(accessToken) || string.IsNullOrWhiteSpace(refreshToken)
+            ? null
+            : new AuthSessionData(steamId, accessToken, refreshToken);
+    }
+
+    public async Task<AuthSessionData?> RefreshSessionAsync(string refreshToken, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(refreshToken))
+        {
+            return null;
+        }
+
+        using var content = new StringContent(
+            JsonSerializer.Serialize(new { refreshToken }),
+            Encoding.UTF8,
+            "application/json");
+        using HttpResponseMessage response = await client.PostAsync($"{apiBaseUrl}/auth/refresh", content, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using JsonDocument document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        JsonElement root = document.RootElement;
+        string? steamId = root.GetProperty("steamId").GetString();
+        string? accessToken = root.GetProperty("accessToken").GetString();
+        string? rotatedRefreshToken = root.GetProperty("refreshToken").GetString();
+        return string.IsNullOrWhiteSpace(steamId) || string.IsNullOrWhiteSpace(accessToken) || string.IsNullOrWhiteSpace(rotatedRefreshToken)
+            ? null
+            : new AuthSessionData(steamId, accessToken, rotatedRefreshToken);
+    }
+
     public async Task SyncCompletedRunsAsync(
         IReadOnlyList<CompletedRun> runs,
         string accessToken,
@@ -48,9 +104,75 @@ public sealed class RemoteSyncClient
         }
     }
 
+    public async Task<SteamProfile?> GetCurrentProfileAsync(
+        string accessToken,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(accessToken))
+        {
+            return null;
+        }
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        using HttpResponseMessage response = await client.GetAsync($"{apiBaseUrl}/api/me", cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using JsonDocument document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        JsonElement root = document.RootElement;
+        return new SteamProfile(
+            root.TryGetProperty("steamId", out JsonElement steamId) ? steamId.GetString() ?? string.Empty : string.Empty,
+            root.TryGetProperty("displayName", out JsonElement displayName) ? displayName.GetString() : null,
+            root.TryGetProperty("avatarUrl", out JsonElement avatarUrl) ? avatarUrl.GetString() : null);
+    }
+
+    public async Task<PersonalStats?> GetPersonalStatsAsync(string accessToken, string filter, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(accessToken))
+        {
+            return null;
+        }
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        using HttpResponseMessage response = await client.GetAsync($"{apiBaseUrl}/api/me/stats?filter={Uri.EscapeDataString(filter)}", cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using JsonDocument document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        JsonElement root = document.RootElement;
+        var trainers = root.GetProperty("byTrainer").EnumerateArray()
+            .Select(item => new TrainerStats(
+                item.GetProperty("trainerId").GetString() ?? "unknown",
+                item.GetProperty("runs").GetInt32(),
+                item.GetProperty("wins").GetInt32(),
+                item.GetProperty("winRate").GetDouble()))
+            .ToArray();
+        var batomon = root.GetProperty("byBatomon").EnumerateArray()
+            .Select(item => new BatomonStats(
+                item.GetProperty("speciesId").GetString() ?? "unknown",
+                item.GetProperty("runs").GetInt32(),
+                item.GetProperty("wins").GetInt32(),
+                item.GetProperty("winRate").GetDouble()))
+            .ToArray();
+        return new PersonalStats(
+            root.GetProperty("completedRuns").GetInt32(),
+            root.GetProperty("completedWins").GetInt32(),
+            root.GetProperty("winRate").GetDouble(),
+            root.GetProperty("averageWins").GetDouble(),
+            trainers,
+            batomon);
+    }
+
     public async Task SyncLiveRunAsync(
         RunState state,
         string accessToken,
+        IReadOnlyList<TrackerEvent>? events = null,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(state.RunId) || string.IsNullOrWhiteSpace(accessToken))
@@ -84,7 +206,15 @@ public sealed class RemoteSyncClient
                 level = unit.Level,
                 isShiny = unit.IsShiny
             }),
-            trinkets = state.Trinkets
+            trinkets = state.Trinkets,
+            events = (events ?? Array.Empty<TrackerEvent>()).Select(item => new
+            {
+                eventType = item.Type.ToString(),
+                detectedAt = item.DetectedAt,
+                saveSequence = item.SaveSequence,
+                confidence = item.Confidence.ToString(),
+                payload = item.Payload
+            })
         };
         string json = JsonSerializer.Serialize(payload);
         await PostJsonWithRetryAsync($"{apiBaseUrl}/api/sync/runs", json, cancellationToken);
@@ -289,6 +419,8 @@ public sealed record GlobalBatomonStat(
     long BattleWins,
     long RunCount,
     long RunWins);
+
+public sealed record SteamProfile(string SteamId, string? DisplayName, string? AvatarUrl);
 
 public sealed record GlobalBestTeam(IReadOnlyList<string> Team, long? Wins);
 

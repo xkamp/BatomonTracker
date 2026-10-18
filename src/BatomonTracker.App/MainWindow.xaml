@@ -141,6 +141,76 @@
             <Setter Property="Padding" Value="10,8"/>
         </Style>
 
+        <Style x:Key="ModernScrollBarButton" TargetType="RepeatButton">
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Border Background="Transparent"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="ScrollBar">
+            <Setter Property="Width" Value="10"/>
+            <Setter Property="MinWidth" Value="10"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#A1C181"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Grid Background="Transparent">
+                            <Track x:Name="PART_Track"
+                                   Orientation="{TemplateBinding Orientation}"
+                                   IsDirectionReversed="False"
+                                   Minimum="{TemplateBinding Minimum}"
+                                   Maximum="{TemplateBinding Maximum}"
+                                   Value="{TemplateBinding Value}"
+                                   ViewportSize="{TemplateBinding ViewportSize}">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}"
+                                                  CommandTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}"
+                                                  Style="{StaticResource ModernScrollBarButton}"/>
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Background="#A1C181" Margin="1,2">
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Border x:Name="ThumbBorder"
+                                                        Background="{TemplateBinding Background}"
+                                                        CornerRadius="5"/>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="ThumbBorder" Property="Background" Value="#619B8A"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}"
+                                                  CommandTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}"
+                                                  Style="{StaticResource ModernScrollBarButton}"/>
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="Orientation" Value="Horizontal">
+                    <Setter Property="Height" Value="10"/>
+                    <Setter Property="MinHeight" Value="10"/>
+                    <Setter Property="Width" Value="Auto"/>
+                    <Setter Property="MinWidth" Value="0"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
         <Style TargetType="ListBoxItem">
             <Setter Property="Padding" Value="16,13"/>
             <Setter Property="Margin" Value="0,0,0,8"/>
@@ -247,6 +317,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
@@ -280,34 +351,60 @@
                                 Padding="16,10">Aggiorna dati</Button>
 
                         <Button x:Name="ProfileButton"
-                                Width="42"
-                                Height="42"
+                                Width="44"
+                                Height="44"
                                 Margin="12,4,0,4"
                                 Padding="0"
-                                Background="#233d4d"
-                                BorderBrush="#233d4d"
-                         Click="ProfileButton_Click"
-                         ToolTip="Profilo">
-                            <Button.ContextMenu>
-                                <ContextMenu x:Name="ProfileMenu">
-                                    <MenuItem x:Name="ProfileLoginMenuItem"
-                                              Header="Accedi con Steam"
-                                              Click="ProfileLogin_Click"/>
-                                    <MenuItem x:Name="ProfileLogoutMenuItem"
-                                              Header="Logout"
-                                              Click="ProfileLogout_Click"/>
-                                </ContextMenu>
-                            </Button.ContextMenu>
-                            <Border Width="28"
-                                    Height="28"
-                                    Background="#A1C181"
-                                    CornerRadius="14">
-                                <Path Fill="#233d4d"
-                                      Stretch="Uniform"
-                                      Margin="7"
-                                      Data="M12,12 A4,4 0 1 0 12,4 A4,4 0 0 0 12,12 M4,21 C4,17 7.6,14 12,14 C16.4,14 20,17 20,21 Z"/>
+                                Background="#2D4B5D"
+                                BorderBrush="#619B8A"
+                                BorderThickness="1"
+                                Click="ProfileButton_Click"
+                                ToolTip="Profilo Steam">
+                            <Border Width="32" Height="32" Background="#A1C181" CornerRadius="16">
+                                <Grid>
+                                    <Image x:Name="ProfileAvatarImage" Stretch="UniformToFill" Visibility="Collapsed"/>
+                                    <Path x:Name="ProfileFallbackIcon"
+                                          Fill="#233D4D"
+                                          Stretch="Uniform"
+                                          Margin="8"
+                                          Data="M12,12 A4,4 0 1 0 12,4 A4,4 0 0 0 12,12 M4,21 C4,17 7.6,14 12,14 C16.4,14 20,17 20,21 Z"/>
+                                </Grid>
                             </Border>
                         </Button>
+                        <Popup x:Name="ProfilePopup"
+                               PlacementTarget="{Binding ElementName=ProfileButton}"
+                               Placement="Bottom"
+                               HorizontalOffset="-190"
+                               VerticalOffset="10"
+                               StaysOpen="False"
+                               AllowsTransparency="True"
+                               PopupAnimation="Fade">
+                            <Border Width="270"
+                                    Padding="18"
+                                    Background="#FFFFFF"
+                                    BorderBrush="#D6DED5"
+                                    BorderThickness="1"
+                                    CornerRadius="14">
+                                <StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="48"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <Border Width="42" Height="42" Background="#A1C181" CornerRadius="21">
+                                            <Grid>
+                                                <Image x:Name="ProfilePopupAvatarImage" Stretch="UniformToFill" Visibility="Collapsed"/>
+                                                <Path x:Name="ProfilePopupFallbackIcon" Fill="#233D4D" Stretch="Uniform" Margin="11" Data="M12,12 A4,4 0 1 0 12,4 A4,4 0 0 0 12,12 M4,21 C4,17 7.6,14 12,14 C16.4,14 20,17 20,21 Z"/>
+                                            </Grid>
+                                        </Border>
+                                        <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+                                            <TextBlock x:Name="ProfileDisplayNameText" Text="Modalita locale" FontSize="15" FontWeight="Bold" Foreground="#233D4D" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock x:Name="ProfileSteamIdText" Text="Non connesso" Margin="0,3,0,0" FontSize="11" Foreground="#619B8A" TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                    </Grid>
+                                    <Border Height="1" Background="#E3E8E1" Margin="0,16,0,12"/>
+                                    <Button x:Name="ProfileLoginMenuItem" Click="ProfileLogin_Click" Content="ACCEDI CON STEAM" Background="#FE7F2D" Foreground="#233D4D" BorderBrush="#FE7F2D" Padding="10,9"/>
+                                    <Button x:Name="ProfileLogoutMenuItem" Click="ProfileLogout_Click" Content="DISCONNETTI" Background="#F3F1EB" Foreground="#233D4D" BorderBrush="#D6DED5" Padding="10,9" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+                        </Popup>
                     </StackPanel>
                 </Grid>
 
@@ -358,7 +455,48 @@
                     </Grid>
                 </Border>
 
-                <ScrollViewer Grid.Row="2"
+                <Border Grid.Row="2"
+                        Margin="0,0,0,24"
+                        Padding="20"
+                        Background="#FFFFFF"
+                        CornerRadius="12">
+                    <StackPanel>
+                        <TextBlock Text="STATISTICHE PERSONALI"
+                                   FontSize="11"
+                                   FontWeight="Bold"
+                                   Foreground="#619b8a"/>
+                        <TextBlock x:Name="PersonalStatsSummaryText"
+                                   Margin="0,8,0,0"
+                                   FontSize="18"
+                                   FontWeight="Bold"
+                                   Foreground="#233d4d"
+                                   Text="Nessuna run completata disponibile."/>
+                        <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                            <TextBlock Text="FILTRO" VerticalAlignment="Center" FontSize="10" FontWeight="Bold" Foreground="#619b8a"/>
+                            <ComboBox x:Name="PersonalStatsFilterComboBox" Width="150" Margin="12,0,0,0" SelectedIndex="0" SelectionChanged="PersonalStatsFilter_Changed">
+                                <ComboBoxItem Content="Tutte le run" Tag="all"/>
+                                <ComboBoxItem Content="Solo ranked" Tag="ranked"/>
+                                <ComboBoxItem Content="Solo non ranked" Tag="unranked"/>
+                            </ComboBox>
+                        </StackPanel>
+                        <Grid Margin="0,16,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                                <TextBlock Text="MIGLIORI TRAINER" FontSize="10" FontWeight="Bold" Foreground="#619b8a"/>
+                                <TextBlock x:Name="PersonalTrainerStatsText" Margin="0,6,0,0" TextWrapping="Wrap" Foreground="#536873"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="12,0,0,0">
+                                <TextBlock Text="BATOMON PIÙ VINCENTI" FontSize="10" FontWeight="Bold" Foreground="#619b8a"/>
+                                <TextBlock x:Name="PersonalBatomonStatsText" Margin="0,6,0,0" TextWrapping="Wrap" Foreground="#536873"/>
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <ScrollViewer Grid.Row="3"
                               VerticalScrollBarVisibility="Auto"
                               HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
@@ -579,9 +717,28 @@
                                 </StackPanel>
                                 <TextBlock x:Name="OverlayOpacityValueText" Grid.Column="1" VerticalAlignment="Bottom" TextAlignment="Right" FontSize="15" Foreground="#619b8a"/>
                             </Grid>
-                            <CheckBox x:Name="OverlayStartVisibleCheckBox" Margin="0,26,0,0" Content="Mostra automaticamente l'overlay quando il gioco e visibile" Foreground="#233d4d" Checked="OverlayStartVisibleCheckBox_Changed" Unchecked="OverlayStartVisibleCheckBox_Changed"/>
-                            <TextBlock Text="Le modifiche vengono salvate automaticamente. Usa Ctrl+Shift+O per mostrare o nascondere l'overlay." Margin="0,12,0,0" TextWrapping="Wrap" Foreground="#619b8a"/>
-                        </StackPanel>
+                             <CheckBox x:Name="OverlayStartVisibleCheckBox" Margin="0,26,0,0" Content="Mostra automaticamente l'overlay quando il gioco e visibile" Foreground="#233d4d" Checked="OverlayStartVisibleCheckBox_Changed" Unchecked="OverlayStartVisibleCheckBox_Changed"/>
+                             <TextBlock Text="SCORCIATOIE DA TASTIERA" Margin="0,28,0,0" FontSize="11" FontWeight="Bold" Foreground="#619b8a"/>
+                             <Grid Margin="0,14,0,0">
+                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="220"/></Grid.ColumnDefinitions>
+                                 <StackPanel Margin="0,0,18,0">
+                                     <TextBlock Text="Mostra/nascondi overlay" FontSize="15" FontWeight="SemiBold" Foreground="#233d4d"/>
+                                     <TextBlock Text="Clicca il riquadro a destra, poi premi insieme i tasti desiderati." Margin="0,4,0,0" Foreground="#619b8a" TextWrapping="Wrap"/>
+                                 </StackPanel>
+                                 <TextBox x:Name="ToggleOverlayHotkeyTextBox" Grid.Column="1" MinHeight="46" Padding="10,8" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" IsReadOnly="True" FontSize="14" FontWeight="Bold" Background="#FFF8E8" BorderBrush="#FE7F2D" Cursor="Hand" PreviewKeyDown="HotkeyTextBox_PreviewKeyDown" GotFocus="HotkeyTextBox_GotFocus" ToolTip="Clicca qui, poi premi la combinazione sulla tastiera"/>
+                             </Grid>
+                             <Grid Margin="0,16,0,0">
+                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="220"/></Grid.ColumnDefinitions>
+                                 <StackPanel Margin="0,0,18,0">
+                                     <TextBlock Text="Blocca/sblocca modifica" FontSize="15" FontWeight="SemiBold" Foreground="#233d4d"/>
+                                     <TextBlock Text="Serve per spostare e ridimensionare l'overlay. Clicca il riquadro, poi premi i tasti insieme." Margin="0,4,0,0" Foreground="#619b8a" TextWrapping="Wrap"/>
+                                 </StackPanel>
+                                 <TextBox x:Name="ToggleInteractionHotkeyTextBox" Grid.Column="1" MinHeight="46" Padding="10,8" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" IsReadOnly="True" FontSize="14" FontWeight="Bold" Background="#FFF8E8" BorderBrush="#FE7F2D" Cursor="Hand" PreviewKeyDown="HotkeyTextBox_PreviewKeyDown" GotFocus="HotkeyTextBox_GotFocus" ToolTip="Clicca qui, poi premi la combinazione sulla tastiera"/>
+                             </Grid>
+                             <Border Margin="0,18,0,0" Padding="12,10" Background="#EEF3EA" CornerRadius="7">
+                                 <TextBlock x:Name="HotkeyCaptureHintText" Text="Istruzioni: clicca un riquadro, tieni premuti almeno uno tra Ctrl, Alt, Shift o Win e premi un altro tasto. Non scrivere il testo manualmente." TextWrapping="Wrap" Foreground="#536873"/>
+                             </Border>
+                         </StackPanel>
                     </Border>
                 </StackPanel>
             </Grid>
